@@ -22,6 +22,7 @@ class QueryBuilderService
 
     private function parseQueryString(array $params)
     {
+        dd($params);
         // Check if table is provided in params
         if (!isset($params['table'])) {
             throw new \Exception("Table name is required.");
