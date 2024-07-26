@@ -1,0 +1,3 @@
+querybuilder.test/data?table=posts&select=id,title&conditions=[{"field":"id","operator":"=","value":2}]
+
+http://querybuilder.test/data?table=posts&select=id,title&relations={"category":{"conditions":[{"field":"id","operator":"=","value":"1"}]}}

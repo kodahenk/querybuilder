@@ -22,7 +22,6 @@ class QueryBuilderService
 
     private function parseQueryString(array $params)
     {
-        dd($params);
         // Check if table is provided in params
         if (!isset($params['table'])) {
             throw new \Exception("Table name is required.");
@@ -40,8 +39,8 @@ class QueryBuilderService
 
         // Apply conditions
         if (isset($params['conditions'])) {
-
-           $this->applyConditions($params['conditions']);
+            $arrConditions = json_decode($params['conditions'], true);
+            $this->applyConditions($arrConditions);
         }
 
         // Select specific columns
@@ -50,76 +49,64 @@ class QueryBuilderService
             $this->query->select($selectColumns);
         }
 
-        // Paginate
+        // Apply pagination
         if (isset($params['limit'])) {
             $this->query->limit($params['limit']);
         }
 
-        // Apply pagination
         if (isset($params['page'])) {
             $page = $params['page'];
             $perPage = $params['limit'] ?? 15; // Default perPage if not provided
-            $this->query->offset(($page - 1) * $perPage)->limit($perPage);
+            $this->query->offset(($page - 1) * $perPage);
         }
 
         // Eager load relations if provided
         if (isset($params['relations'])) {
             $arr = json_decode($params['relations'], true);
-            //$arr = json_decode(json_encode($params['relations'],true));
-
             $this->applyRelations($arr);
         }
     }
+
     private function getModelForTable(string $table)
     {
-        // You need to define a way to map table names to models
         $models = [
             'posts' => \App\Models\Post::class,
             'users' => \App\Models\User::class,
-            'post_tags' => \App\Models\PostTag::class,
+            'categories' => \App\Models\Category::class,
             // Add more mappings as needed
         ];
-
-        return $models[$table] ?? null;
-    }
-    private function initQuery(string $table)
-    {
-        // Check if table exists
-        if (!Schema::hasTable($table)) {
-            throw new \Exception("Table $table does not exist.");
+    
+        if (!array_key_exists($table, $models)) {
+            throw new \Exception("Model mapping for table $table is not defined.");
         }
-
-        return DB::table($table);
+    
+        return $models[$table];
     }
 
     private function applyConditions(array $conditions)
     {
         foreach ($conditions as $condition) {
-            // Assuming $condition is an associative array with 'field', 'operator', 'value'
-            $this->query->where($condition['field'], $condition['operator'], $condition['value']);
+            $field = $condition['field'];
+            $operator = $condition['operator'] ?? '=';
+            $value = $condition['value'];
+
+            $this->query->where($field, $operator, $value);
         }
     }
 
     private function applyRelations(array $relations)
     {
-
         foreach ($relations as $relation => $details) {
-            if (is_string($details)) {
-                // If details is a string, it's just the relation name
-                $this->query->with($details);
-            } else {
-                // If details is an array, we have conditions or nested relations
-                $this->query->with([$relation => function($q) use ($details) {
-                    if (isset($details['conditions'])) {
-                      $this->applyConditions($details['conditions']);
-                    }
-                    if (isset($details['relations'])) {
-                        $this->applyRelations($details['relations']);
-                    }
-                }]);
-            }
+            $this->query->with([$relation => function ($q) use ($details) {
+                if (isset($details['conditions'])) {
+                    $this->applyConditions($details['conditions']);
+                }
+                if (isset($details['relations'])) {
+                    $this->applyRelations($details['relations']);
+                }
+            }]);
         }
-    }
+    }    
 
     public function toJson()
     {
@@ -153,5 +140,10 @@ class QueryBuilderService
                 $xml->addChild("$key", htmlspecialchars("$value"));
             }
         }
+    }
+
+    public function toSql()
+    {
+        return $this->query->toSql();
     }
 }

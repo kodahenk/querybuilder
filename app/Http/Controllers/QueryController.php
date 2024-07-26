@@ -23,6 +23,7 @@ class QueryController extends Controller
 
         $query = $this->queryBuilder->buildQuery($params);
 
+        return ($query->toSql());
 
         if ($format === 'xml') {
             $results = $query->toXml();
