@@ -19,7 +19,7 @@ class QueryBuilderService
         $this->applySelect($request->input('select'));
 
         // Apply conditions
-        $this->applyConditions($request->input('conditions'));
+        $this->applyConditions($this->query,$request->input('conditions'));
 
         // Apply relations and their conditions
         $relations = $request->input('relations');
@@ -70,14 +70,7 @@ class QueryBuilderService
         }
     }
 
-    protected function applyConditions($conditions)
-    {
-        if ($conditions) {
-            foreach ($conditions as $condition) {
-                $this->query->where($condition['field'], $condition['operator'], $condition['value']);
-            }
-        }
-    }
+
 
     protected function applyRelations($relations)
     {
@@ -85,9 +78,7 @@ class QueryBuilderService
             foreach ($relations as $relation => $relationDetails) {
                 $this->query->with([$relation => function ($query) use ($relationDetails) {
                     if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                        foreach ($relationDetails['conditions'] as $condition) {
-                            $query->where($condition['field'], $condition['operator'], $condition['value']);
-                        }
+                        $this->applyConditions($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
                     }
                     if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                         $this->applyRelationsToQuery($query, $relationDetails['relations']);
@@ -102,9 +93,7 @@ class QueryBuilderService
         foreach ($relations as $relation => $relationDetails) {
             $query->with([$relation => function ($query) use ($relationDetails) {
                 if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                    foreach ($relationDetails['conditions'] as $condition) {
-                        $query->where($condition['field'], $condition['operator'], $condition['value']);
-                    }
+                    $this->applyConditions($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
                 }
                 if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                     $this->applyRelationsToQuery($query, $relationDetails['relations']);
@@ -112,6 +101,56 @@ class QueryBuilderService
             }]);
         }
     }
+
+    protected function applyConditions($query, $conditions, $conditionLogic = null)
+    {
+        if ($conditionLogic) {
+            $logic = $this->parseConditionLogic($conditionLogic);
+            foreach ($logic as $logicItem) {
+                $condition = $this->findConditionByName($conditions, $logicItem['name']);
+                if ($condition) {
+                    if ($logicItem['type'] === 'or') {
+                        $query->orWhere($condition['field'], $condition['operator'], $condition['value']);
+                    } else {
+                        $query->where($condition['field'], $condition['operator'], $condition['value']);
+                    }
+                }
+            }
+        } else {
+            foreach ($conditions as $condition) {
+                $query->where($condition['field'], $condition['operator'], $condition['value']);
+            }
+        }
+    }
+
+    protected function parseConditionLogic($conditionLogic)
+    {
+        // Parse the condition logic string into an array of conditions with their types (and/or)
+        $logic = [];
+        preg_match_all('/(\(|\)|\w+|\s+|and|or)/i', $conditionLogic, $matches);
+        $tokens = $matches[0];
+        $currentType = 'and';
+        foreach ($tokens as $token) {
+            $token = trim($token);
+            if (strtolower($token) === 'and' || strtolower($token) === 'or') {
+                $currentType = strtolower($token);
+            } elseif (!empty($token) && $token !== '(' && $token !== ')') {
+                $logic[] = ['name' => $token, 'type' => $currentType];
+            }
+        }
+        return $logic;
+    }
+
+    protected function findConditionByName($conditions, $name)
+    {
+        foreach ($conditions as $condition) {
+            if ($condition['name'] === $name) {
+                return $condition;
+            }
+        }
+        return null;
+    }
+
 
     protected function applyLimitAndPagination($limit, $page)
     {
