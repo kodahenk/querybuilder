@@ -2,119 +2,90 @@
 
 namespace App\Services;
 
-use Illuminate\Http\Request;
-use Illuminate\Database\Eloquent\Builder;
+use PDO;
+use Exception;
 
 class QueryBuilderService
 {
-    protected $model;
+    protected $pdo;
     protected $query;
 
-    public function buildQuery(Request $request)
+    public function __construct(PDO $pdo)
     {
-        // Initialize model and query based on the table parameter
-        $this->initializeModel($request->input('table'));
-    
-        // Apply select clause
-        $this->applySelect($request->input('select'));
-    
-        // Apply conditions
-        $this->applyConditions($request->input('conditions'));
-    
-        // Apply relations and their conditions
-        $relations = $request->input('relations');
-        if ($relations) {
-            $relations = json_decode($relations, true);
-        }
-        $this->applyRelations($relations);
-    
-        // Apply limit and pagination
-        $this->applyLimitAndPagination($request->input('limit'), $request->input('page'));
-    
-        // Execute query and get results
-        $results = $this->query->get();
-    
-        // Filter out results where 'user' is null if 'user' relation is requested
-        if (isset($relations['user'])) {
-            $results = $results->filter(function ($item) {
-                return !is_null($item->user);
-            });
-        }
-    
-        // Return results in specified format
-        return $this->formatResults($results, $request->input('format'));
-    }
-    
-
-    protected function initializeModel($table)
-    {
-        // Map table names to model classes
-        $modelMapping = [
-            'posts' => \App\Models\Post::class,
-            // Add other table-model mappings here
-        ];
-
-        if (array_key_exists($table, $modelMapping)) {
-            $this->model = new $modelMapping[$table];
-            $this->query = $this->model->newQuery();
-        } else {
-            throw new \Exception("Model for table {$table} not found.");
-        }
+        $this->pdo = $pdo;
     }
 
-    protected function applySelect($select)
+    public function buildQuery($request)
     {
-        if ($select) {
-            $this->query->select(explode(',', $select));
-        }
-    }
+        try {
+            $table = $request['table'];
+            $select = $request['select'];
+            $limit = $request['limit'];
+            $page = $request['page'];
+            $relations = json_decode($request['relations'], true);
+            $format = $request['format'];
 
-    protected function applyConditions($conditions)
-    {
-        if ($conditions) {
-            foreach ($conditions as $condition) {
-                $this->query->where($condition['field'], $condition['operator'], $condition['value']);
+            // Initialize the query
+            $sql = "SELECT {$select} FROM {$table}";
+
+            // Apply conditions
+            if (isset($request['conditions'])) {
+                $conditions = json_decode($request['conditions'], true);
+                if ($conditions) {
+                    $conditionStrings = array_map(function ($condition) {
+                        return "{$condition['field']} {$condition['operator']} :{$condition['field']}";
+                    }, $conditions);
+                    $sql .= " WHERE " . implode(' AND ', $conditionStrings);
+                }
             }
-        }
-    }
 
-    protected function applyRelations($relations)
-    {
-        if (is_array($relations)) {
-            foreach ($relations as $relation => $relationDetails) {
-                $this->query->with([$relation => function ($query) use ($relationDetails) {
-                    if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                        foreach ($relationDetails['conditions'] as $condition) {
-                            $query->where($condition['field'], $condition['operator'], $condition['value']);
-                        }
-                    }
-                }]);
+            // Apply limit and pagination
+            if ($limit) {
+                $sql .= " LIMIT :limit OFFSET :offset";
             }
-        }
-    }
-    
-    
-    protected function applyLimitAndPagination($limit, $page)
-    {
-        if ($limit) {
-            $this->query->limit($limit);
-        }
 
-        if ($page) {
-            $this->query->offset(($page - 1) * $limit);
+            $stmt = $this->pdo->prepare($sql);
+
+            // Bind parameters for conditions
+            if (isset($request['conditions'])) {
+                foreach ($conditions as $condition) {
+                    $stmt->bindValue(":{$condition['field']}", $condition['value']);
+                }
+            }
+
+            // Bind parameters for pagination
+            if ($limit) {
+                $stmt->bindValue(':limit', (int) $limit, PDO::PARAM_INT);
+                $stmt->bindValue(':offset', ($page - 1) * $limit, PDO::PARAM_INT);
+            }
+
+            $stmt->execute();
+            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Handle relations if any
+            if ($relations) {
+                // Example: Add logic to handle relations and conditions
+            }
+
+            // Return results in specified format
+            return $this->formatResults($results, $format);
+        } catch (Exception $e) {
+            throw new Exception('Query Error: ' . $e->getMessage());
         }
     }
 
     protected function formatResults($results, $format)
     {
         if ($format === 'json') {
-            return response()->json($results);
+            return json_encode($results);
         } elseif ($format === 'xml') {
             $xml = new \SimpleXMLElement('<root/>');
-            array_walk_recursive($results->toArray(), array($xml, 'addChild'));
-            return response($xml->asXML(), 200)->header('Content-Type', 'text/xml');
+            array_walk_recursive($results, function ($value, $key) use ($xml) {
+                $xml->addChild($key, $value);
+            });
+            return $xml->asXML();
         }
 
-        return $results;
+        return json_encode($results);
     }
 }
