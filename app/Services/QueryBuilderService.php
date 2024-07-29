@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class QueryBuilderService
@@ -18,14 +17,14 @@ class QueryBuilderService
         $select = $request->input('select');
         $limit = $request->input('limit');
         $page = $request->input('page');
-        $orderBy = $request->input('order_by');
-        $orderDirection = $request->input('order_direction', 'desc');
 
         // Get JSON body parameters
         $conditions = $request->input('conditions', []);
         $relations = $request->input('relations', []);
         $condition_logic = $request->input('condition_logic', null);
         $format = $request->input('format', 'json');
+        $orderBy = $request->input('order_by');
+        $orderDirection = $request->input('order_direction', 'desc');
 
         // Initialize model and query based on the table parameter
         $this->initializeModel($table);
@@ -138,6 +137,9 @@ class QueryBuilderService
                     if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
                         $this->applyConditionsToQuery($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
                     }
+                    if (isset($relationDetails['order_by']) && isset($relationDetails['order_direction'])) {
+                        $this->applyOrderByToQuery($query, $relationDetails['order_by'], $relationDetails['order_direction']);
+                    }
                     if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                         $this->applyRelationsToQuery($query, $relationDetails['relations']);
                     }
@@ -193,6 +195,9 @@ class QueryBuilderService
                 if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
                     $this->applyConditionsToQuery($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
                 }
+                if (isset($relationDetails['order_by']) && isset($relationDetails['order_direction'])) {
+                    $this->applyOrderByToQuery($query, $relationDetails['order_by'], $relationDetails['order_direction']);
+                }
                 if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                     $this->applyRelationsToQuery($query, $relationDetails['relations']);
                 }
@@ -215,6 +220,13 @@ class QueryBuilderService
     {
         if ($orderBy) {
             $this->query->orderBy($orderBy, $orderDirection);
+        }
+    }
+
+    protected function applyOrderByToQuery($query, $orderBy, $orderDirection)
+    {
+        if ($orderBy) {
+            $query->orderBy($orderBy, $orderDirection);
         }
     }
 
