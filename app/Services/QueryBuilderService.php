@@ -4,6 +4,8 @@ namespace App\Services;
 
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class QueryBuilderService
 {
@@ -12,39 +14,39 @@ class QueryBuilderService
 
     public function buildQuery(Request $request)
     {
+        // Get URL parameters
+        $table = $request->input('table');
+        $select = $request->input('select');
+        $limit = $request->input('limit');
+        $page = $request->input('page');
+
+        // Get JSON body parameters
+        $conditions = $request->input('conditions', []);
+        $relations = $request->input('relations', []);
+        $condition_logic = $request->input('condition_logic', null);
+        $format = $request->input('format', 'json');
+
         // Initialize model and query based on the table parameter
-        $this->initializeModel($request->input('table'));
+        $this->initializeModel($table);
 
         // Apply select clause
-        $this->applySelect($request->input('select'));
+        $this->applySelect($select);
 
         // Apply conditions
-        $this->applyConditions($request->input('conditions'));
+        $this->applyConditions($conditions, $condition_logic);
 
         // Apply relations and their conditions
-        $relations = $request->input('relations');
-        if ($relations) {
-            $relations = json_decode($relations, true);
-        }
         $this->applyRelations($relations);
 
         // Apply limit and pagination
-        $this->applyLimitAndPagination($request->input('limit'), $request->input('page'));
+        $this->applyLimitAndPagination($limit, $page);
 
         // Execute query and get results
         $results = $this->query->get();
-
-        // Filter out results where 'user' is null if 'user' relation is requested
-        if (isset($relations['user'])) {
-            $results = $results->filter(function ($item) {
-                return !is_null($item->user);
-            });
-        }
-
+        
         // Return results in specified format
-        return $this->formatResults($results, $request->input('format'));
+        return $this->formatResults($results, $format);
     }
-
 
     protected function initializeModel($table)
     {
@@ -70,11 +72,46 @@ class QueryBuilderService
         }
     }
 
-    protected function applyConditions($conditions)
+    protected function applyConditions($conditions, $condition_logic)
     {
         if ($conditions) {
+            $conditionGroups = [];
+            $currentGroup = [];
+            $operator = 'and';
+
             foreach ($conditions as $condition) {
-                $this->query->where($condition['field'], $condition['operator'], $condition['value']);
+                if (isset($condition['group']) && $condition['group']) {
+                    if ($currentGroup) {
+                        $conditionGroups[] = [$operator => $currentGroup];
+                        $currentGroup = [];
+                    }
+                    $operator = $condition['group'];
+                } else {
+                    $currentGroup[] = [
+                        'field' => $condition['field'],
+                        'operator' => $condition['operator'],
+                        'value' => $condition['value']
+                    ];
+                }
+            }
+            if ($currentGroup) {
+                $conditionGroups[] = [$operator => $currentGroup];
+            }
+
+            $this->applyConditionGroups($conditionGroups, $condition_logic);
+        }
+    }
+
+    protected function applyConditionGroups($conditionGroups, $condition_logic)
+    {
+        foreach ($conditionGroups as $group) {
+            foreach ($group as $operator => $conditions) {
+                $queryMethod = $operator === 'and' ? 'where' : 'orWhere';
+                $this->query->$queryMethod(function ($query) use ($conditions) {
+                    foreach ($conditions as $condition) {
+                        $query->where($condition['field'], $condition['operator'], $condition['value']);
+                    }
+                });
             }
         }
     }
