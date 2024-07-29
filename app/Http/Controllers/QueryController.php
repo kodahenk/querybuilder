@@ -2,35 +2,27 @@
 
 namespace App\Http\Controllers;
 
-
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Services\QueryBuilderService;
 
 class QueryController extends Controller
 {
-    protected $queryBuilder;
+    protected $queryBuilderService;
 
-    public function __construct(QueryBuilderService $queryBuilder)
+    public function __construct(QueryBuilderService $queryBuilderService)
     {
-        $this->queryBuilder = $queryBuilder;
+        $this->queryBuilderService = $queryBuilderService;
     }
 
-    public function getData(Request $request)
+    public function index(Request $request)
     {
-        $params = $request->all();
-        $format = $request->input('format', 'json'); // Default format is JSON
-
-        $query = $this->queryBuilder->buildQuery($params);
-
-        return ($query->toSql());
-
-        if ($format === 'xml') {
-            $results = $query->toXml();
-            return response($results, 200)->header('Content-Type', 'application/xml');
+        try {
+            // QueryBuilderService'i kullanarak sorguyu oluştur ve sonuçları al
+            return $this->queryBuilderService->buildQuery($request);
+        } catch (\Exception $e) {
+            // Hata durumunda JSON formatında hata mesajı döner
+            return response()->json(['error' => $e->getMessage()], 400);
         }
-
-        $results = $query->toJson();
-        return response($results, 200)->header('Content-Type', 'application/json');
     }
 }

@@ -2,148 +2,119 @@
 
 namespace App\Services;
 
-use DB;
-use SimpleXMLElement;
-use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
 
 class QueryBuilderService
 {
+    protected $model;
     protected $query;
-    protected $format;
 
-    public function buildQuery(array $params)
+    public function buildQuery(Request $request)
     {
-        $this->parseQueryString($params);
-
-        return $this;
-    }
-
-    private function parseQueryString(array $params)
-    {
-        // Check if table is provided in params
-        if (!isset($params['table'])) {
-            throw new \Exception("Table name is required.");
-        }
-
-        $table = $params['table'];
-        $model = $this->getModelForTable($table);
-
-        if (!$model) {
-            throw new \Exception("Model for table $table does not exist.");
-        }
-
-        // Start with the base query
-        $this->query = $model::query();
-
+        // Initialize model and query based on the table parameter
+        $this->initializeModel($request->input('table'));
+    
+        // Apply select clause
+        $this->applySelect($request->input('select'));
+    
         // Apply conditions
-        if (isset($params['conditions'])) {
-            $arrConditions = json_decode($params['conditions'], true);
-            $this->applyConditions($arrConditions);
-        }
-
-        // Select specific columns
-        if (isset($params['select'])) {
-            $selectColumns = is_string($params['select']) ? explode(',', $params['select']) : $params['select'];
-            $this->query->select($selectColumns);
-        }
-
-        // Apply pagination
-        if (isset($params['limit'])) {
-            $this->query->limit($params['limit']);
-        }
-
-        if (isset($params['page'])) {
-            $page = $params['page'];
-            $perPage = $params['limit'] ?? 15; // Default perPage if not provided
-            $this->query->offset(($page - 1) * $perPage);
-        }
-
-        // Eager load relations if provided
-        if (isset($params['relations'])) {
-            $arr = json_decode($params['relations'], true);
-            $this->applyRelations($arr);
-        }
-    }
-
-    private function getModelForTable(string $table)
-    {
-        $models = [
-            'posts' => \App\Models\Post::class,
-            'users' => \App\Models\User::class,
-            'categories' => \App\Models\Category::class,
-            // Add more mappings as needed
-        ];
+        $this->applyConditions($request->input('conditions'));
     
-        if (!array_key_exists($table, $models)) {
-            throw new \Exception("Model mapping for table $table is not defined.");
+        // Apply relations and their conditions
+        $relations = $request->input('relations');
+        if ($relations) {
+            $relations = json_decode($relations, true);
         }
+        $this->applyRelations($relations);
     
-        return $models[$table];
-    }
-
-    private function applyConditions(array $conditions)
-    {
-        foreach ($conditions as $condition) {
-            $field = $condition['field'];
-            $operator = $condition['operator'] ?? '=';
-            $value = $condition['value'];
-
-            $this->query->where($field, $operator, $value);
-        }
-    }
-
-    private function applyRelations(array $relations)
-    {
-        foreach ($relations as $relation => $details) {
-            $this->query->with([$relation => function ($q) use ($details) {
-                if (isset($details['conditions'])) {
-                    $this->applyConditions($details['conditions']);
-                }
-                if (isset($details['relations'])) {
-                    $this->applyRelations($details['relations']);
-                }
-            }]);
-        }
-    }    
-
-    public function toJson()
-    {
-        return $this->query->get()->toJson();
-    }
-
-    public function toXml()
-    {
+        // Apply limit and pagination
+        $this->applyLimitAndPagination($request->input('limit'), $request->input('page'));
+    
+        // Execute query and get results
         $results = $this->query->get();
-        return $this->convertToXml($results);
-    }
-
-    private function convertToXml($data)
-    {
-        $xml = new SimpleXMLElement('<root/>');
-        foreach ($data as $item) {
-            $itemArray = (array) $item;
-            $itemXml = $xml->addChild(Str::singular($item->getTable()));
-            $this->arrayToXml($itemArray, $itemXml);
+    
+        // Filter out results where 'user' is null if 'user' relation is requested
+        if (isset($relations['user'])) {
+            $results = $results->filter(function ($item) {
+                return !is_null($item->user);
+            });
         }
-        return $xml->asXML();
+    
+        // Return results in specified format
+        return $this->formatResults($results, $request->input('format'));
+    }
+    
+
+    protected function initializeModel($table)
+    {
+        // Map table names to model classes
+        $modelMapping = [
+            'posts' => \App\Models\Post::class,
+            // Add other table-model mappings here
+        ];
+
+        if (array_key_exists($table, $modelMapping)) {
+            $this->model = new $modelMapping[$table];
+            $this->query = $this->model->newQuery();
+        } else {
+            throw new \Exception("Model for table {$table} not found.");
+        }
     }
 
-    private function arrayToXml(array $data, SimpleXMLElement $xml)
+    protected function applySelect($select)
     {
-        foreach ($data as $key => $value) {
-            if (is_array($value)) {
-                $subnode = $xml->addChild($key);
-                $this->arrayToXml($value, $subnode);
-            } else {
-                $xml->addChild("$key", htmlspecialchars("$value"));
+        if ($select) {
+            $this->query->select(explode(',', $select));
+        }
+    }
+
+    protected function applyConditions($conditions)
+    {
+        if ($conditions) {
+            foreach ($conditions as $condition) {
+                $this->query->where($condition['field'], $condition['operator'], $condition['value']);
             }
         }
     }
 
-    public function toSql()
+    protected function applyRelations($relations)
     {
-        return $this->query->toSql();
+        if (is_array($relations)) {
+            foreach ($relations as $relation => $relationDetails) {
+                $this->query->with([$relation => function ($query) use ($relationDetails) {
+                    if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
+                        foreach ($relationDetails['conditions'] as $condition) {
+                            $query->where($condition['field'], $condition['operator'], $condition['value']);
+                        }
+                    }
+                }]);
+            }
+        }
+    }
+    
+    
+    protected function applyLimitAndPagination($limit, $page)
+    {
+        if ($limit) {
+            $this->query->limit($limit);
+        }
+
+        if ($page) {
+            $this->query->offset(($page - 1) * $limit);
+        }
+    }
+
+    protected function formatResults($results, $format)
+    {
+        if ($format === 'json') {
+            return response()->json($results);
+        } elseif ($format === 'xml') {
+            $xml = new \SimpleXMLElement('<root/>');
+            array_walk_recursive($results->toArray(), array($xml, 'addChild'));
+            return response($xml->asXML(), 200)->header('Content-Type', 'text/xml');
+        }
+
+        return $results;
     }
 }
