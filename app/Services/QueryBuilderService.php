@@ -54,6 +54,11 @@ class QueryBuilderService
         $modelMapping = [
             'posts' => \App\Models\Post::class,
             'users' => \App\Models\User::class,
+            "categories" => \App\Models\Category::class,
+            "tags" => \App\Models\Tag::class,
+            "comments" => \App\Models\Comment::class,
+            "likes" => \App\Models\Like::class,
+
             // Add other table-model mappings here
         ];
 
