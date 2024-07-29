@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -19,6 +18,8 @@ class QueryBuilderService
         $select = $request->input('select');
         $limit = $request->input('limit');
         $page = $request->input('page');
+        $orderBy = $request->input('order_by');
+        $orderDirection = $request->input('order_direction', 'desc');
 
         // Get JSON body parameters
         $conditions = $request->input('conditions', []);
@@ -41,9 +42,15 @@ class QueryBuilderService
         // Apply limit and pagination
         $this->applyLimitAndPagination($limit, $page);
 
+        // Apply order by clause
+        $this->applyOrderBy($orderBy, $orderDirection);
+
+        // Log the SQL query for debugging purposes
+        Log::info('SQL Query:', ['query' => $this->query->toSql(), 'bindings' => $this->query->getBindings()]);
+
         // Execute query and get results
         $results = $this->query->get();
-        
+
         // Return results in specified format
         return $this->formatResults($results, $format);
     }
@@ -54,11 +61,10 @@ class QueryBuilderService
         $modelMapping = [
             'posts' => \App\Models\Post::class,
             'users' => \App\Models\User::class,
-            "categories" => \App\Models\Category::class,
-            "tags" => \App\Models\Tag::class,
-            "comments" => \App\Models\Comment::class,
-            "likes" => \App\Models\Like::class,
-
+            'categories' => \App\Models\Category::class,
+            'tags' => \App\Models\Tag::class,
+            'comments' => \App\Models\Comment::class,
+            'likes' => \App\Models\Like::class,
             // Add other table-model mappings here
         ];
 
@@ -126,10 +132,11 @@ class QueryBuilderService
         if (is_array($relations)) {
             foreach ($relations as $relation => $relationDetails) {
                 $this->query->with([$relation => function ($query) use ($relationDetails) {
+                    if (isset($relationDetails['select'])) {
+                        $query->select(explode(',', $relationDetails['select']));
+                    }
                     if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                        foreach ($relationDetails['conditions'] as $condition) {
-                            $query->where($condition['field'], $condition['operator'], $condition['value']);
-                        }
+                        $this->applyConditionsToQuery($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
                     }
                     if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                         $this->applyRelationsToQuery($query, $relationDetails['relations']);
@@ -139,14 +146,52 @@ class QueryBuilderService
         }
     }
 
+    protected function applyConditionsToQuery($query, $conditions, $condition_logic)
+    {
+        $conditionGroups = [];
+        $currentGroup = [];
+        $operator = 'and';
+
+        foreach ($conditions as $condition) {
+            if (isset($condition['group']) && $condition['group']) {
+                if ($currentGroup) {
+                    $conditionGroups[] = [$operator => $currentGroup];
+                    $currentGroup = [];
+                }
+                $operator = $condition['group'];
+            } else {
+                $currentGroup[] = [
+                    'field' => $condition['field'],
+                    'operator' => $condition['operator'],
+                    'value' => $condition['value']
+                ];
+            }
+        }
+        if ($currentGroup) {
+            $conditionGroups[] = [$operator => $currentGroup];
+        }
+
+        foreach ($conditionGroups as $group) {
+            foreach ($group as $operator => $conditions) {
+                $queryMethod = $operator === 'and' ? 'where' : 'orWhere';
+                $query->$queryMethod(function ($query) use ($conditions) {
+                    foreach ($conditions as $condition) {
+                        $query->where($condition['field'], $condition['operator'], $condition['value']);
+                    }
+                });
+            }
+        }
+    }
+
     protected function applyRelationsToQuery($query, $relations)
     {
         foreach ($relations as $relation => $relationDetails) {
             $query->with([$relation => function ($query) use ($relationDetails) {
+                if (isset($relationDetails['select'])) {
+                    $query->select(explode(',', $relationDetails['select']));
+                }
                 if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                    foreach ($relationDetails['conditions'] as $condition) {
-                        $query->where($condition['field'], $condition['operator'], $condition['value']);
-                    }
+                    $this->applyConditionsToQuery($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
                 }
                 if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                     $this->applyRelationsToQuery($query, $relationDetails['relations']);
@@ -163,6 +208,13 @@ class QueryBuilderService
 
         if ($page) {
             $this->query->offset(($page - 1) * $limit);
+        }
+    }
+
+    protected function applyOrderBy($orderBy, $orderDirection)
+    {
+        if ($orderBy) {
+            $this->query->orderBy($orderBy, $orderDirection);
         }
     }
 

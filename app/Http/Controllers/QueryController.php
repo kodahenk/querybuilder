@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Services\QueryBuilderService;
+use Illuminate\Support\Facades\Log;
 
 class QueryController extends Controller
 {
@@ -18,20 +19,11 @@ class QueryController extends Controller
     public function index(Request $request)
     {
         try {
-            // Validate query parameters
-            $request->validate([
-                'table' => 'required|string',
-                'format' => 'nullable|string|in:json,xml',
-                'limit' => 'nullable|integer',
-                'page' => 'nullable|integer',
-            ]);
-
             // QueryBuilderService'i kullanarak sorguyu oluştur ve sonuçları al
-            $results = $this->queryBuilderService->buildQuery($request);
-
-            return response()->json($results);
+            return $this->queryBuilderService->buildQuery($request);
         } catch (\Exception $e) {
-            // Hata durumunda JSON formatında hata mesajı döner
+            // Hata durumunda JSON formatında hata mesajı döner ve hatayı loglar
+            Log::error('Query Error', ['error' => $e->getMessage()]);
             return response()->json(['error' => $e->getMessage()], 400);
         }
     }
