@@ -14,43 +14,44 @@ class QueryBuilderService
     {
         // Initialize model and query based on the table parameter
         $this->initializeModel($request->input('table'));
-    
+
         // Apply select clause
         $this->applySelect($request->input('select'));
-    
+
         // Apply conditions
         $this->applyConditions($request->input('conditions'));
-    
+
         // Apply relations and their conditions
         $relations = $request->input('relations');
         if ($relations) {
             $relations = json_decode($relations, true);
         }
         $this->applyRelations($relations);
-    
+
         // Apply limit and pagination
         $this->applyLimitAndPagination($request->input('limit'), $request->input('page'));
-    
+
         // Execute query and get results
         $results = $this->query->get();
-    
+
         // Filter out results where 'user' is null if 'user' relation is requested
         if (isset($relations['user'])) {
             $results = $results->filter(function ($item) {
                 return !is_null($item->user);
             });
         }
-    
+
         // Return results in specified format
         return $this->formatResults($results, $request->input('format'));
     }
-    
+
 
     protected function initializeModel($table)
     {
         // Map table names to model classes
         $modelMapping = [
             'posts' => \App\Models\Post::class,
+            'users' => \App\Models\User::class,
             // Add other table-model mappings here
         ];
 
@@ -88,12 +89,30 @@ class QueryBuilderService
                             $query->where($condition['field'], $condition['operator'], $condition['value']);
                         }
                     }
+                    if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
+                        $this->applyRelationsToQuery($query, $relationDetails['relations']);
+                    }
                 }]);
             }
         }
     }
-    
-    
+
+    protected function applyRelationsToQuery($query, $relations)
+    {
+        foreach ($relations as $relation => $relationDetails) {
+            $query->with([$relation => function ($query) use ($relationDetails) {
+                if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
+                    foreach ($relationDetails['conditions'] as $condition) {
+                        $query->where($condition['field'], $condition['operator'], $condition['value']);
+                    }
+                }
+                if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
+                    $this->applyRelationsToQuery($query, $relationDetails['relations']);
+                }
+            }]);
+        }
+    }
+
     protected function applyLimitAndPagination($limit, $page)
     {
         if ($limit) {
