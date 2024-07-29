@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class QueryBuilderService
@@ -23,8 +25,6 @@ class QueryBuilderService
         $relations = $request->input('relations', []);
         $condition_logic = $request->input('condition_logic', null);
         $format = $request->input('format', 'json');
-        $orderBy = $request->input('order_by');
-        $orderDirection = $request->input('order_direction', 'desc');
 
         // Initialize model and query based on the table parameter
         $this->initializeModel($table);
@@ -35,20 +35,20 @@ class QueryBuilderService
         // Apply conditions
         $this->applyConditions($conditions, $condition_logic);
 
+        // Apply dynamic where conditions from body
+        $this->applyDynamicWhere($request->all());
+
         // Apply relations and their conditions
         $this->applyRelations($relations);
 
         // Apply limit and pagination
         $this->applyLimitAndPagination($limit, $page);
 
-        // Apply order by clause
-        $this->applyOrderBy($orderBy, $orderDirection);
-
-        // Log the SQL query for debugging purposes
-        Log::info('SQL Query:', ['query' => $this->query->toSql(), 'bindings' => $this->query->getBindings()]);
-
         // Execute query and get results
         $results = $this->query->get();
+        
+        // Log the SQL query
+        Log::info('SQL Query', ['query' => $this->query->toSql(), 'bindings' => $this->query->getBindings()]);
 
         // Return results in specified format
         return $this->formatResults($results, $format);
@@ -60,10 +60,10 @@ class QueryBuilderService
         $modelMapping = [
             'posts' => \App\Models\Post::class,
             'users' => \App\Models\User::class,
-            'categories' => \App\Models\Category::class,
-            'tags' => \App\Models\Tag::class,
-            'comments' => \App\Models\Comment::class,
-            'likes' => \App\Models\Like::class,
+            "categories" => \App\Models\Category::class,
+            "tags" => \App\Models\Tag::class,
+            "comments" => \App\Models\Comment::class,
+            "likes" => \App\Models\Like::class,
             // Add other table-model mappings here
         ];
 
@@ -126,6 +126,16 @@ class QueryBuilderService
         }
     }
 
+    protected function applyDynamicWhere($data)
+    {
+        foreach ($data as $key => $value) {
+            if (strpos($key, 'where__') === 0) {
+                $field = substr($key, 7);
+                $this->query->where($field, $value);
+            }
+        }
+    }
+
     protected function applyRelations($relations)
     {
         if (is_array($relations)) {
@@ -135,52 +145,24 @@ class QueryBuilderService
                         $query->select(explode(',', $relationDetails['select']));
                     }
                     if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                        $this->applyConditionsToQuery($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
+                        foreach ($relationDetails['conditions'] as $condition) {
+                            $query->where($condition['field'], $condition['operator'], $condition['value']);
+                        }
                     }
                     if (isset($relationDetails['order_by']) && isset($relationDetails['order_direction'])) {
-                        $this->applyOrderByToQuery($query, $relationDetails['order_by'], $relationDetails['order_direction']);
+                        $query->orderBy($relationDetails['order_by'], $relationDetails['order_direction']);
                     }
                     if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                         $this->applyRelationsToQuery($query, $relationDetails['relations']);
                     }
-                }]);
-            }
-        }
-    }
-
-    protected function applyConditionsToQuery($query, $conditions, $condition_logic)
-    {
-        $conditionGroups = [];
-        $currentGroup = [];
-        $operator = 'and';
-
-        foreach ($conditions as $condition) {
-            if (isset($condition['group']) && $condition['group']) {
-                if ($currentGroup) {
-                    $conditionGroups[] = [$operator => $currentGroup];
-                    $currentGroup = [];
-                }
-                $operator = $condition['group'];
-            } else {
-                $currentGroup[] = [
-                    'field' => $condition['field'],
-                    'operator' => $condition['operator'],
-                    'value' => $condition['value']
-                ];
-            }
-        }
-        if ($currentGroup) {
-            $conditionGroups[] = [$operator => $currentGroup];
-        }
-
-        foreach ($conditionGroups as $group) {
-            foreach ($group as $operator => $conditions) {
-                $queryMethod = $operator === 'and' ? 'where' : 'orWhere';
-                $query->$queryMethod(function ($query) use ($conditions) {
-                    foreach ($conditions as $condition) {
-                        $query->where($condition['field'], $condition['operator'], $condition['value']);
+                    // Apply dynamic where conditions for nested relations
+                    foreach ($relationDetails as $key => $value) {
+                        if (strpos($key, 'where__') === 0) {
+                            $field = substr($key, 7);
+                            $query->where($field, $value);
+                        }
                     }
-                });
+                }]);
             }
         }
     }
@@ -193,13 +175,22 @@ class QueryBuilderService
                     $query->select(explode(',', $relationDetails['select']));
                 }
                 if (isset($relationDetails['conditions']) && is_array($relationDetails['conditions'])) {
-                    $this->applyConditionsToQuery($query, $relationDetails['conditions'], $relationDetails['condition_logic'] ?? null);
+                    foreach ($relationDetails['conditions'] as $condition) {
+                        $query->where($condition['field'], $condition['operator'], $condition['value']);
+                    }
                 }
                 if (isset($relationDetails['order_by']) && isset($relationDetails['order_direction'])) {
-                    $this->applyOrderByToQuery($query, $relationDetails['order_by'], $relationDetails['order_direction']);
+                    $query->orderBy($relationDetails['order_by'], $relationDetails['order_direction']);
                 }
                 if (isset($relationDetails['relations']) && is_array($relationDetails['relations'])) {
                     $this->applyRelationsToQuery($query, $relationDetails['relations']);
+                }
+                // Apply dynamic where conditions for nested relations
+                foreach ($relationDetails as $key => $value) {
+                    if (strpos($key, 'where__') === 0) {
+                        $field = substr($key, 7);
+                        $query->where($field, $value);
+                    }
                 }
             }]);
         }
@@ -213,20 +204,6 @@ class QueryBuilderService
 
         if ($page) {
             $this->query->offset(($page - 1) * $limit);
-        }
-    }
-
-    protected function applyOrderBy($orderBy, $orderDirection)
-    {
-        if ($orderBy) {
-            $this->query->orderBy($orderBy, $orderDirection);
-        }
-    }
-
-    protected function applyOrderByToQuery($query, $orderBy, $orderDirection)
-    {
-        if ($orderBy) {
-            $query->orderBy($orderBy, $orderDirection);
         }
     }
 

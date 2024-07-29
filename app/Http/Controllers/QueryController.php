@@ -22,7 +22,7 @@ class QueryController extends Controller
             // QueryBuilderService'i kullanarak sorguyu oluştur ve sonuçları al
             return $this->queryBuilderService->buildQuery($request);
         } catch (\Exception $e) {
-            // Hata durumunda JSON formatında hata mesajı döner ve hatayı loglar
+            // Hata durumunda JSON formatında hata mesajı döner
             Log::error('Query Error', ['error' => $e->getMessage()]);
             return response()->json(['error' => $e->getMessage()], 400);
         }
